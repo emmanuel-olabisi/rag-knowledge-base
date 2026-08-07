@@ -1,44 +1,76 @@
+import type { Message } from "@/types/message"
+import type { Citation } from "@/types/citations"
+
 const API_URL = import.meta.env.VITE_API_URL
-const token = localStorage.getItem("token")
 
-export async function getDocumentConversation(id: number){
-    const response = await fetch(`${API_URL}/api/documents/${id}/conversation`,{
-        method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
+function getToken() {
+    return localStorage.getItem("token")
+}
+
+function parseCitations(value: Message["citations"]): Citation[] {
+    if (!value) return []
+    if (Array.isArray(value)) return value
+    if (typeof value === "string") {
+        try {
+            return JSON.parse(value)
+        } catch {
+            return []
         }
-    })
-
-    const result = await response.json()
-    console.log("conversation: ",result.data)
-
-    if (result.success){
-        return result.data
     }
     return []
 }
 
-export async function sendUserMessage(userInput: string, id: number){
+function normalizeMessage(message: Message): Message {
+    return {
+        ...message,
+        citations: parseCitations(message.citations),
+    }
+}
 
-    const response = await fetch(`${API_URL}/api/documents/${id}/conversation`,{
-        method: "POST",
+export async function getDocumentConversation(id: number) {
+    const response = await fetch(`${API_URL}/api/documents/${id}/conversation`, {
+        method: "GET",
         headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
+            Authorization: `Bearer ${getToken()}`,
         },
-        body:JSON.stringify({
-            role: "user",
-            content: userInput,
-        })
     })
 
     const result = await response.json()
-    if (result.success){
-        console.log("server success, result data: ", result)
-        return result
+
+    if (result.success) {
+        return result.data.map(normalizeMessage)
     }
 
-    alert("server error, result: "+result.message)
-    return "error"
+    return []
+}
+
+export async function sendUserMessage(userInput: string, id: number) {
+    const response = await fetch(`${API_URL}/api/documents/${id}/conversation`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({
+            role: "user",
+            content: userInput,
+        }),
+    })
+
+    const result = await response.json()
+
+    if (result.success) {
+        return {
+            userMessage: normalizeMessage(result.userMessage),
+            assistantMessage: normalizeMessage({
+                ...result.assistantMessage,
+                citations: result.citations || result.assistantMessage.citations,
+            }),
+            citations: result.citations || [],
+            retrieval: result.retrieval,
+        }
+    }
+
+    throw new Error(result.message || "failed to send message")
 }

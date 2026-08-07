@@ -1,231 +1,138 @@
 # RAG Knowledge Base
 
-A production-ready full-stack **Retrieval-Augmented Generation (RAG)** application that enables users to upload documents, ask natural language questions, and receive AI-generated answers grounded in the contents of their documents using semantic search.
+A production-quality full-stack **Retrieval-Augmented Generation (RAG)** application for uploading documents, asking natural language questions, and receiving AI answers grounded in source chunks with transparent citations.
 
-Built with **React, TypeScript, Express.js, PostgreSQL (pgvector), and OpenAI APIs**.
+Built with **React, TypeScript, Express, PostgreSQL + pgvector, and OpenAI**.
 
 ---
 
 ## Live Demo
 
-🌐 Frontend: https://rag-knowledge-base-43xu.vercel.app/
-
-⚙️ Backend API: https://rag-knowledge-base-production-1844.up.railway.app
-
----
-
-## Preview
-
-> Add screenshots or a short GIF demonstrating:
->
-> - User registration/login
-> - Uploading a document
-> - Chatting with the uploaded document
-> - Renaming/deleting documents
+- Frontend: https://rag-knowledge-base-43xu.vercel.app/
+- Backend API: https://rag-knowledge-base-production-1844.up.railway.app
 
 ---
 
-# Features
+## Why this project stands out
 
-### Authentication
+This is not a basic “embed chunks and call GPT” demo. The retrieval stack includes the same layers teams add when moving RAG from prototype to production:
 
-- Secure JWT authentication
-- User registration and login
-- Protected API routes
-
-### Document Management
-
-- Upload PDF and DOCX files
-- Extract document text automatically
-- Rename uploaded documents
-- Delete uploaded documents
-- Persistent document library
-
-### AI & Retrieval
-
-- Automatic document chunking
-- OpenAI Embeddings API integration
-- Vector storage using PostgreSQL + pgvector
-- Semantic similarity search
-- Retrieval-Augmented Generation (RAG)
-- Context-aware responses using OpenAI Chat Completions
-
-### Conversations
-
-- Persistent chat history
-- Conversations scoped to individual documents
-- Modern ChatGPT-inspired interface
+1. **Vector search** — semantic retrieval with pgvector cosine similarity
+2. **Metadata filtering** — chunk-level metadata for document-aware filtering
+3. **Hybrid search** — vector + PostgreSQL full-text search fused with reciprocal rank fusion (RRF)
+4. **Query rewriting** — standalone search queries generated from conversation context
+5. **Reranking** — LLM reranking over hybrid candidates before generation
+6. **Citations** — numbered source excerpts returned with every assistant answer
+7. **Retrieval evaluation metrics** — latency, cache hit rate, and query logs via `/api/eval/metrics`
+8. **Caching + conversation memory** — embedding/retrieval caching and rolling conversation summaries
 
 ---
 
-# Architecture
+## Architecture
 
-```
-                Upload Document
-                       │
-                       ▼
-             Extract Document Text
-                       │
-                       ▼
-               Split Into Chunks
-                       │
-                       ▼
-        Generate OpenAI Embeddings
-                       │
-                       ▼
-      Store Chunks + Vectors (pgvector)
-                       │
-──────────────────────────────────────────────
-                       │
-                 User asks question
-                       │
-                       ▼
-      Generate Question Embedding
-                       │
-                       ▼
-      PostgreSQL Vector Similarity Search
-                       │
-                       ▼
-       Retrieve Most Relevant Chunks
-                       │
-                       ▼
-    Send Context + Question to OpenAI
-                       │
-                       ▼
-             AI Generates Response
+```text
+Upload Document
+      │
+      ▼
+Extract Text → Chunk (overlap) → Embed → Store vectors + tsvector + metadata
+      │
+────────────────────────────────────────────────────────────
+      │
+User Question
+      │
+      ▼
+Rewrite Query (conversation-aware)
+      │
+      ├── Vector Search (top 20)
+      └── Keyword Search / BM25-like ts_rank (top 20)
+      │
+      ▼
+Reciprocal Rank Fusion
+      │
+      ▼
+LLM Reranking → Top 5 Sources
+      │
+      ▼
+Prompt with numbered citations + conversation memory
+      │
+      ▼
+OpenAI Chat Completion → Answer + source citations
 ```
 
 ---
 
-# Tech Stack
+## Tech Stack
 
-## Frontend
+### Frontend
+- React 19 + TypeScript + Vite
+- Tailwind CSS v4 + shadcn/ui
+- React Router
+- Lucide icons
 
-- React
-- TypeScript
-- Vite
-- Tailwind CSS
-- shadcn/ui
-
-## Backend
-
-- Node.js
-- Express.js
-- PostgreSQL
-- pgvector
-- JWT Authentication
-- Multer
-- Mammoth
-- PDF-Parse
-- OpenAI API
-
-## AI
-
-- OpenAI Embeddings API
-- OpenAI Chat Completions API
-- Semantic Vector Search
-- Retrieval-Augmented Generation (RAG)
+### Backend
+- Node.js + Express 5
+- PostgreSQL + pgvector
+- JWT authentication
+- OpenAI Embeddings + Chat Completions
+- Multer + Mammoth (DOCX extraction)
 
 ---
 
-# Project Structure
+## Project Structure
 
 ```text
 rag-knowledge-base/
-│
 ├── client/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── services/
-│   │   ├── types/
-│   │   └── assets/
-│   │
-│   └── package.json
-│
+│   │   ├── components/      # Chat UI, sidebar, message bubbles
+│   │   ├── pages/           # Landing, auth, chat workspace
+│   │   ├── services/        # API clients
+│   │   └── types/           # Documents, messages, citations
+│   └── vercel.json          # SPA routing for direct URL access
 ├── server/
-│   ├── db/
-│   ├── routes/
-│   ├── services/
-│   ├── uploads/
-│   ├── package.json
-│   └── index.js
-│
+│   ├── db/migrations/       # Production RAG schema upgrade
+│   ├── routes/              # Auth, documents, eval metrics
+│   └── services/
+│       ├── retrievalService.js    # Hybrid search + RRF
+│       ├── queryRewriteService.js # Context-aware query rewriting
+│       ├── rerankService.js       # LLM reranking
+│       ├── memoryService.js       # Conversation summaries
+│       ├── cacheService.js        # Embedding + retrieval cache
+│       ├── evalService.js         # Retrieval metrics/logging
+│       ├── embeddingService.js
+│       ├── chunkService.js
+│       └── openaiService.js
 └── README.md
 ```
 
 ---
 
-# Database Design
+## Database Design
 
-The application uses a relational PostgreSQL database consisting of four primary tables.
-
-### users
-
-Stores user authentication information.
-
-### documents
-
-Stores uploaded document metadata.
-
-### document_chunks
-
-Stores each extracted document chunk together with its vector embedding.
-
-### conversations
-
-Stores conversation history associated with individual documents.
+| Table | Purpose |
+|-------|---------|
+| `users` | Authentication |
+| `documents` | Uploaded file metadata |
+| `document_chunks` | Chunk text, embeddings, metadata, full-text vectors |
+| `conversations` | Chat history + citation payloads |
+| `conversation_summaries` | Rolling conversation memory |
+| `retrieval_logs` | Retrieval evaluation metrics |
 
 ---
 
-# Engineering Challenges Solved
-
-This project demonstrates several real-world AI engineering concepts:
-
-- Built a complete Retrieval-Augmented Generation (RAG) pipeline from scratch
-- Implemented semantic search using PostgreSQL and pgvector
-- Designed an efficient document chunking strategy
-- Generated vector embeddings using the OpenAI Embeddings API
-- Performed cosine similarity search directly in PostgreSQL
-- Designed a normalized relational database schema
-- Implemented secure JWT authentication
-- Built document upload, rename, and delete functionality
-- Maintained persistent chat history for each document
-- Integrated a React frontend with a RESTful Express backend
-- Deployed a production-ready full-stack application using Railway and Vercel
-- Configured CORS, environment variables, and production deployment
-
----
-
-# Installation
-
-Clone the repository.
+## Installation
 
 ```bash
 git clone https://github.com/emmanuelboop/rag-knowledge-base.git
-```
-
-Install frontend dependencies.
-
-```bash
-cd client
-npm install
-```
-
-Install backend dependencies.
-
-```bash
-cd ../server
-npm install
+cd rag-knowledge-base/client && npm install
+cd ../server && npm install
 ```
 
 ---
 
-# Environment Variables
+## Environment Variables
 
-## Server
-
-Create a `.env` file inside the `server` directory.
+### Server (`server/.env`)
 
 ```env
 DATABASE_URL=your_database_url
@@ -234,9 +141,7 @@ OPENAI_API_KEY=your_openai_api_key
 CLIENT_URL=http://localhost:5173
 ```
 
-## Client
-
-Create a `.env` file inside the `client` directory.
+### Client (`client/.env`)
 
 ```env
 VITE_API_URL=http://localhost:5000
@@ -244,95 +149,142 @@ VITE_API_URL=http://localhost:5000
 
 ---
 
-# Running the Project
+## Database Migration (required for production RAG features)
 
-Start the backend.
+Run once against your PostgreSQL database.
+
+### If your database is on Neon (recommended)
+
+1. Open the [Neon Console](https://console.neon.tech) → your project → **SQL Editor**
+2. Paste and run the contents of `server/db/migrations/001_rag_upgrade.sql`
+3. Confirm `pgvector` is enabled — the migration runs `CREATE EXTENSION IF NOT EXISTS vector;`
+
+**Or run locally** using the same connection string Neon gives you (also set as `DATABASE_URL` on Railway):
 
 ```bash
 cd server
-npm start
+# server/.env should contain your Neon DATABASE_URL
+npm run migrate
 ```
 
-Start the frontend.
+In Neon, copy the connection string from **Dashboard → Connect** (pooled or direct both work for migrations).
+
+### Generic PostgreSQL
 
 ```bash
+psql $DATABASE_URL -f server/db/migrations/001_rag_upgrade.sql
+```
+
+This adds:
+- chunk metadata + `tsvector` for hybrid search
+- citation storage on conversations
+- conversation summaries
+- retrieval logs for evaluation metrics
+
+---
+
+## Running Locally
+
+```bash
+# Terminal 1
+cd server
+npm start
+
+# Terminal 2
 cd client
 npm run dev
 ```
 
 ---
 
-# Future Improvements
+## API Highlights
 
-- AI response streaming
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/auth/signup` | Create account |
+| `POST /api/auth/login` | JWT login |
+| `POST /api/documents/upload` | Upload + ingest document |
+| `GET /api/documents/` | List user documents |
+| `POST /api/documents/:id/conversation` | RAG chat with citations |
+| `GET /api/eval/metrics` | Retrieval metrics dashboard data |
+
+### Example RAG response shape
+
+```json
+{
+  "success": true,
+  "assistantMessage": { "...": "..." },
+  "citations": [
+    {
+      "citationNumber": 1,
+      "chunkText": "...",
+      "metadata": { "file_name": "report.docx", "chunk_index": 0 }
+    }
+  ],
+  "retrieval": {
+    "cacheHit": false,
+    "candidateCount": 18,
+    "latencyMs": 842
+  }
+}
+```
+
+---
+
+## Deployment
+
+- **Frontend:** Vercel (`client/`), with SPA rewrites via `vercel.json`
+- **Backend:** Railway (`server/`), uses `npm start`
+- Set environment variables in both platforms
+- Run the SQL migration against your production database before deploying the new backend
+
+---
+
+## Features
+
+### Authentication
+- Secure JWT auth
+- Protected chat routes
+- Clear signup/login error handling
+
+### Document Management
+- Upload PDF and DOCX
+- Rename and delete documents
+- Persistent per-user library
+
+### Production RAG Pipeline
+- Chunk overlap for better recall
+- Metadata-aware retrieval
+- Hybrid vector + keyword search
+- Query rewriting from conversation history
+- LLM reranking
+- Inline + expandable source citations
+- Embedding and retrieval caching
+- Conversation memory via summaries
+- Retrieval logging and metrics endpoint
+
+---
+
+## Future Improvements
+
+- Cross-encoder reranking model
+- Response streaming
 - Multi-document retrieval
-- Document previews
-- Drag-and-drop uploads
-- Folder organization
-- Shareable knowledge bases
-- Source citations
-- Hybrid keyword + semantic search
-- Response caching
-- OCR support for scanned PDFs
+- OCR for scanned PDFs
+- Admin dashboard for eval metrics
+- Redis-backed distributed cache
 
 ---
 
-# Lessons Learned
-
-Developing this project provided hands-on experience with:
-
-- Retrieval-Augmented Generation (RAG)
-- Vector databases
-- Semantic search
-- OpenAI APIs
-- PostgreSQL pgvector
-- Full-stack authentication
-- File processing pipelines
-- Production deployment with Railway and Vercel
-- Environment variable management
-- Cross-Origin Resource Sharing (CORS)
-- GitHub secret scanning and deployment best practices
-
----
-
-# Screenshots
-
-## Login
-
-*(Add screenshot)*
-
----
-
-## Document Library
-
-*(Add screenshot)*
-
----
-
-## Chat Interface
-
-*(Add screenshot)*
-
----
-
-## Retrieval Pipeline
-
-*(Add architecture diagram)*
-
----
-
-# Author
+## Author
 
 **Emmanuel Olabisi**
 
-AI & Full-Stack Developer
-
-GitHub: https://github.com/emmanuelboop
-
-LinkedIn: https://www.linkedin.com/in/emmanuel-olabisi-4901b2236/
+- GitHub: https://github.com/emmanuelboop
+- LinkedIn: https://www.linkedin.com/in/emmanuel-olabisi-4901b2236/
 
 ---
 
-# License
+## License
 
-This project is licensed under the MIT License.
+MIT License
