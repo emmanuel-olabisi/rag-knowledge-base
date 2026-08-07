@@ -33,7 +33,6 @@ function DocumentsSidebar({
     setDocuments,
     setSelectedDocument,
 }: DSidebarProps) {
-    const token = localStorage.getItem("token")
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [editingId, setEditingId] = useState<number | null>(null)
     const [documentName, setDocumentName] = useState("")
@@ -59,7 +58,7 @@ function DocumentsSidebar({
             const response = await fetch(`${VITE_API_URL}/api/documents/upload`, {
                 method: "POST",
                 headers: {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${localStorage.getItem("token")}`,
                 },
                 body: formData,
             })

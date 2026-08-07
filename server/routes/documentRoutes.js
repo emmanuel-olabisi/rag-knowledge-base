@@ -44,6 +44,15 @@ function authenticate(req, res, next) {
     next()
 }
 
+async function verifyDocumentOwnership(documentId, userId) {
+    const result = await pool.query(
+        "SELECT id FROM documents WHERE id = $1 AND user_id = $2",
+        [documentId, userId]
+    )
+
+    return result.rows.length > 0
+}
+
 router.post("/upload", authenticate, upload.single("file"), async (req, res) => {
     try {
         const user_id = req.user.userID
@@ -164,9 +173,20 @@ router.delete("/:id", authenticate, async (req, res) => {
 
 router.get("/:id/conversation", authenticate, async (req, res) => {
     try {
+        const documentId = Number(req.params.id)
+        const userId = req.user.userID
+
+        const ownsDocument = await verifyDocumentOwnership(documentId, userId)
+        if (!ownsDocument) {
+            return res.status(403).json({
+                success: false,
+                message: "document not found",
+            })
+        }
+
         const result = await pool.query(
             "SELECT * FROM conversations WHERE document_id=$1 AND user_id=$2 ORDER BY created_at ASC",
-            [req.params.id, req.user.userID]
+            [documentId, userId]
         )
 
         res.json({
@@ -188,6 +208,14 @@ router.post("/:id/conversation", authenticate, async (req, res) => {
         const documentId = Number(req.params.id)
         const userId = req.user.userID
         const userQuery = req.body.content
+
+        const ownsDocument = await verifyDocumentOwnership(documentId, userId)
+        if (!ownsDocument) {
+            return res.status(403).json({
+                success: false,
+                message: "document not found",
+            })
+        }
 
         const result = await pool.query(
             "INSERT INTO conversations(user_id, document_id, role, message) VALUES($1,$2,$3,$4) RETURNING *",
