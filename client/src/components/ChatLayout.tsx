@@ -1,22 +1,27 @@
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import MessageBubble from "@/components/MessageBubble"
-import { getDocumentConversation, sendUserMessage } from "@/services/conversationService"
+import { getDocumentConversation, sendUserMessageStream } from "@/services/conversationService"
+import { getUsername } from "@/lib/auth"
 import type { DocumentMeta } from "@/types/documents"
 import type { Message } from "@/types/message"
-import { FileText, Loader2, SendHorizontal, Sparkles } from "lucide-react"
+import { FileText, Loader2, SendHorizontal, Sparkles, UserRound } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 type ChatLayoutProps = {
     selectedDocument: DocumentMeta | null
 }
 
+const STREAMING_MESSAGE_ID = -1
+
 function ChatLayout({ selectedDocument }: ChatLayoutProps) {
     const [conversation, setConversation] = useState<Message[]>([])
     const [inputValue, setInputValue] = useState("")
     const [isSending, setIsSending] = useState(false)
+    const [isStreaming, setIsStreaming] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
     const [error, setError] = useState("")
+    const [username] = useState(getUsername)
     const bottomRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -43,24 +48,66 @@ function ChatLayout({ selectedDocument }: ChatLayoutProps) {
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-    }, [conversation, isSending])
+    }, [conversation, isSending, isStreaming])
 
     async function handleSendButton() {
         if (!inputValue.trim() || !selectedDocument || isSending) return
 
+        const userInput = inputValue.trim()
         setIsSending(true)
+        setIsStreaming(true)
         setError("")
+        setInputValue("")
+
+        let streamedText = ""
 
         try {
-            const insertedMessages = await sendUserMessage(inputValue, selectedDocument.id)
-            setConversation((prev) => [
-                ...prev,
-                insertedMessages.userMessage,
-                insertedMessages.assistantMessage,
-            ])
-            setInputValue("")
+            await sendUserMessageStream(userInput, selectedDocument.id, {
+                onUserMessage: (userMessage) => {
+                    setConversation((prev) => [...prev, userMessage])
+                },
+                onChunk: (chunk) => {
+                    streamedText += chunk
+                    setConversation((prev) => {
+                        const withoutPlaceholder = prev.filter(
+                            (message) => message.id !== STREAMING_MESSAGE_ID
+                        )
+
+                        return [
+                            ...withoutPlaceholder,
+                            {
+                                id: STREAMING_MESSAGE_ID,
+                                user_id: 0,
+                                document_id: selectedDocument.id,
+                                role: "assistant",
+                                message: streamedText,
+                                created_at: new Date().toISOString(),
+                                citations: [],
+                            },
+                        ]
+                    })
+                },
+                onDone: (assistantMessage) => {
+                    setConversation((prev) => [
+                        ...prev.filter((message) => message.id !== STREAMING_MESSAGE_ID),
+                        assistantMessage,
+                    ])
+                    setIsStreaming(false)
+                },
+                onError: (message) => {
+                    setError(message)
+                    setConversation((prev) =>
+                        prev.filter((message) => message.id !== STREAMING_MESSAGE_ID)
+                    )
+                    setIsStreaming(false)
+                },
+            })
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to send message.")
+            setConversation((prev) =>
+                prev.filter((message) => message.id !== STREAMING_MESSAGE_ID)
+            )
+            setIsStreaming(false)
         } finally {
             setIsSending(false)
         }
@@ -97,6 +144,11 @@ function ChatLayout({ selectedDocument }: ChatLayoutProps) {
                         </p>
                     </div>
                 </div>
+
+                <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm">
+                    <UserRound className="size-4 text-primary" />
+                    <span className="font-medium">{username}</span>
+                </div>
             </header>
 
             <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
@@ -117,7 +169,11 @@ function ChatLayout({ selectedDocument }: ChatLayoutProps) {
                     </div>
                 ) : (
                     conversation.map((message) => (
-                        <MessageBubble key={message.id} message={message} />
+                        <MessageBubble
+                            key={message.id}
+                            message={message}
+                            isStreaming={isStreaming && message.id === STREAMING_MESSAGE_ID}
+                        />
                     ))
                 )}
                 <div ref={bottomRef} />

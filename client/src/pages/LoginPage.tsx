@@ -8,6 +8,7 @@ import {
     CardTitle,
 } from "@/components/ui/card"
 import { loginUser } from "@/services/authService"
+import { setSession } from "@/lib/auth"
 import { useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Sparkles } from "lucide-react"
@@ -34,7 +35,7 @@ function LoginPage() {
             const data = await loginUser(username.trim(), password)
 
             if (data.success && data.token) {
-                localStorage.setItem("token", data.token)
+                setSession(data.token, username.trim())
                 navigate("/chat")
             } else {
                 setError(data.message || "Login failed.")

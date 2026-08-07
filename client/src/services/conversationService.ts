@@ -1,11 +1,8 @@
 import type { Message } from "@/types/message"
 import type { Citation } from "@/types/citations"
+import { getToken } from "@/lib/auth"
 
 const API_URL = import.meta.env.VITE_API_URL
-
-function getToken() {
-    return localStorage.getItem("token")
-}
 
 function parseCitations(value: Message["citations"]): Citation[] {
     if (!value) return []
@@ -45,8 +42,19 @@ export async function getDocumentConversation(id: number) {
     return []
 }
 
-export async function sendUserMessage(userInput: string, id: number) {
-    const response = await fetch(`${API_URL}/api/documents/${id}/conversation`, {
+type StreamCallbacks = {
+    onUserMessage: (message: Message) => void
+    onChunk: (chunk: string) => void
+    onDone: (assistantMessage: Message, citations: Citation[]) => void
+    onError: (message: string) => void
+}
+
+export async function sendUserMessageStream(
+    userInput: string,
+    id: number,
+    callbacks: StreamCallbacks
+) {
+    const response = await fetch(`${API_URL}/api/documents/${id}/conversation/stream`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -58,19 +66,57 @@ export async function sendUserMessage(userInput: string, id: number) {
         }),
     })
 
-    const result = await response.json()
-
-    if (result.success) {
-        return {
-            userMessage: normalizeMessage(result.userMessage),
-            assistantMessage: normalizeMessage({
-                ...result.assistantMessage,
-                citations: result.citations || result.assistantMessage.citations,
-            }),
-            citations: result.citations || [],
-            retrieval: result.retrieval,
-        }
+    if (!response.ok) {
+        const error = await response.json().catch(() => null)
+        throw new Error(error?.message || "failed to send message")
     }
 
-    throw new Error(result.message || "failed to send message")
+    if (!response.body) {
+        throw new Error("streaming is not supported in this browser")
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split("\n\n")
+        buffer = events.pop() || ""
+
+        for (const event of events) {
+            const dataLine = event
+                .split("\n")
+                .find((line) => line.startsWith("data: "))
+
+            if (!dataLine) continue
+
+            const payload = JSON.parse(dataLine.slice(6))
+
+            if (payload.type === "userMessage") {
+                callbacks.onUserMessage(normalizeMessage(payload.data))
+            }
+
+            if (payload.type === "chunk") {
+                callbacks.onChunk(payload.content)
+            }
+
+            if (payload.type === "done") {
+                callbacks.onDone(
+                    normalizeMessage({
+                        ...payload.assistantMessage,
+                        citations: payload.citations,
+                    }),
+                    payload.citations || []
+                )
+            }
+
+            if (payload.type === "error") {
+                callbacks.onError(payload.message || "server error")
+            }
+        }
+    }
 }

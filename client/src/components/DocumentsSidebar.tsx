@@ -7,6 +7,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { deleteDocument, renameDocument } from "@/services/documentService"
+import { clearSession, getUsername } from "@/lib/auth"
 import type { DocumentMeta } from "@/types/documents"
 import {
     FileText,
@@ -39,6 +40,7 @@ function DocumentsSidebar({
     const [isUploading, setIsUploading] = useState(false)
     const [uploadError, setUploadError] = useState("")
     const navigate = useNavigate()
+    const username = getUsername()
 
     function openFileManager() {
         fileInputRef.current?.click()
@@ -88,7 +90,7 @@ function DocumentsSidebar({
                     </div>
                     <div>
                         <h2 className="font-semibold tracking-tight">Knowledge Base</h2>
-                        <p className="text-xs text-sidebar-foreground/70">Your document library</p>
+                        <p className="text-xs text-sidebar-foreground/70">Signed in as {username}</p>
                     </div>
                 </div>
             </div>
@@ -203,7 +205,7 @@ function DocumentsSidebar({
                     variant="outline"
                     className="w-full border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent"
                     onClick={() => {
-                        localStorage.removeItem("token")
+                        clearSession()
                         navigate("/login")
                     }}
                 >

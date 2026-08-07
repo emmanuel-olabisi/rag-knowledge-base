@@ -4,6 +4,7 @@ import { Bot, UserRound } from "lucide-react"
 
 type MessageBubbleProps = {
     message: Message
+    isStreaming?: boolean
 }
 
 function CitationList({ citations }: { citations: Citation[] }) {
@@ -36,7 +37,7 @@ function CitationList({ citations }: { citations: Citation[] }) {
     )
 }
 
-function MessageBubble({ message }: MessageBubbleProps) {
+function MessageBubble({ message, isStreaming = false }: MessageBubbleProps) {
     const isAssistant = message.role === "assistant"
     const citations = Array.isArray(message.citations) ? message.citations : []
 
@@ -55,8 +56,13 @@ function MessageBubble({ message }: MessageBubbleProps) {
                         : "rounded-tr-md bg-primary text-primary-foreground"
                 }`}
             >
-                <p className="whitespace-pre-wrap break-words leading-7">{message.message}</p>
-                {isAssistant ? <CitationList citations={citations} /> : null}
+                <p className="whitespace-pre-wrap break-words leading-7">
+                    {message.message}
+                    {isStreaming ? (
+                        <span className="ml-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-primary align-middle" />
+                    ) : null}
+                </p>
+                {isAssistant && !isStreaming ? <CitationList citations={citations} /> : null}
             </div>
 
             {!isAssistant ? (

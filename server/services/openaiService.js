@@ -14,6 +14,27 @@ async function generateResponse(messages) {
     return completion.choices[0].message.content
 }
 
+async function streamResponse(messages, onToken) {
+    const stream = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages,
+        temperature: 0.2,
+        stream: true,
+    })
+
+    let fullContent = ""
+
+    for await (const chunk of stream) {
+        const token = chunk.choices[0]?.delta?.content || ""
+        if (!token) continue
+
+        fullContent += token
+        onToken(token)
+    }
+
+    return fullContent
+}
+
 async function rewriteQueryWithContext(query, recentMessages) {
     const completion = await openai.chat.completions.create({
         model: "gpt-4.1-mini",
@@ -104,6 +125,7 @@ async function summarizeConversation(messages) {
 
 module.exports = {
     generateResponse,
+    streamResponse,
     rewriteQueryWithContext,
     rerankWithLLM,
     summarizeConversation,

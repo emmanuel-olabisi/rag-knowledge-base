@@ -5,7 +5,7 @@ const multer = require("multer")
 const pool = require("../db/db")
 const jwt = require("jsonwebtoken")
 const { extractText } = require("../services/documentService")
-const { generateResponse } = require("../services/openaiService")
+const { generateResponse, streamResponse } = require("../services/openaiService")
 const { chunkText } = require("../services/chunkService")
 const { generateEmbedding } = require("../services/embeddingService")
 const { rewriteQuery } = require("../services/queryRewriteService")
@@ -51,6 +51,50 @@ async function verifyDocumentOwnership(documentId, userId) {
     )
 
     return result.rows.length > 0
+}
+
+function sendSseEvent(res, payload) {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`)
+}
+
+async function prepareRagConversation({ documentId, userId, userQuery, role, metadataFilter = {} }) {
+    const result = await pool.query(
+        "INSERT INTO conversations(user_id, document_id, role, message) VALUES($1,$2,$3,$4) RETURNING *",
+        [userId, documentId, role, userQuery]
+    )
+
+    const savedUserMessage = result.rows[0]
+    const { summary, recentMessages } = await getConversationContext(documentId, userId)
+    const rewrittenQuery = await rewriteQuery(userQuery, recentMessages)
+
+    const { chunks: candidateChunks, cacheHit } = await retrieveRelevantChunks({
+        documentId,
+        userId,
+        query: userQuery,
+        rewrittenQuery,
+        metadataFilter,
+    })
+
+    const rankedChunks = await rerankChunks(rewrittenQuery, candidateChunks, 5)
+    const citations = formatContextWithCitations(rankedChunks)
+    const numberedContext = buildNumberedContext(rankedChunks)
+
+    const messages = buildPromptMessages({
+        summary,
+        recentMessages,
+        numberedContext,
+        currentQuery: userQuery,
+    })
+
+    return {
+        savedUserMessage,
+        messages,
+        citations,
+        rankedChunks,
+        rewrittenQuery,
+        cacheHit,
+        candidateChunks,
+    }
 }
 
 router.post("/upload", authenticate, upload.single("file"), async (req, res) => {
@@ -201,6 +245,107 @@ router.get("/:id/conversation", authenticate, async (req, res) => {
     }
 })
 
+router.post("/:id/conversation/stream", authenticate, async (req, res) => {
+    const startedAt = Date.now()
+
+    try {
+        const documentId = Number(req.params.id)
+        const userId = req.user.userID
+        const userQuery = req.body.content
+
+        const ownsDocument = await verifyDocumentOwnership(documentId, userId)
+        if (!ownsDocument) {
+            return res.status(403).json({
+                success: false,
+                message: "document not found",
+            })
+        }
+
+        const {
+            savedUserMessage,
+            messages,
+            citations,
+            rankedChunks,
+            rewrittenQuery,
+            cacheHit,
+            candidateChunks,
+        } = await prepareRagConversation({
+            documentId,
+            userId,
+            userQuery,
+            role: req.body.role,
+            metadataFilter: req.body.metadataFilter || {},
+        })
+
+        res.setHeader("Content-Type", "text/event-stream")
+        res.setHeader("Cache-Control", "no-cache")
+        res.setHeader("Connection", "keep-alive")
+        res.flushHeaders?.()
+
+        sendSseEvent(res, {
+            type: "userMessage",
+            data: savedUserMessage,
+        })
+
+        const assistantResponse = await streamResponse(messages, (token) => {
+            sendSseEvent(res, {
+                type: "chunk",
+                content: token,
+            })
+        })
+
+        const assistantResult = await pool.query(
+            `INSERT INTO conversations(user_id, document_id, role, message, citations)
+             VALUES($1, $2, $3, $4, $5) RETURNING *`,
+            [
+                userId,
+                documentId,
+                "assistant",
+                assistantResponse,
+                JSON.stringify(citations),
+            ]
+        )
+
+        await logRetrieval({
+            documentId,
+            userId,
+            query: userQuery,
+            rewrittenQuery,
+            chunks: rankedChunks,
+            latencyMs: Date.now() - startedAt,
+            cacheHit,
+        })
+
+        sendSseEvent(res, {
+            type: "done",
+            assistantMessage: assistantResult.rows[0],
+            citations,
+            retrieval: {
+                cacheHit,
+                candidateCount: candidateChunks.length,
+                latencyMs: Date.now() - startedAt,
+            },
+        })
+
+        res.end()
+    } catch (error) {
+        console.log("stream error: ", error)
+
+        if (!res.headersSent) {
+            return res.status(400).json({
+                success: false,
+                message: "server error",
+            })
+        }
+
+        sendSseEvent(res, {
+            type: "error",
+            message: "server error",
+        })
+        res.end()
+    }
+})
+
 router.post("/:id/conversation", authenticate, async (req, res) => {
     const startedAt = Date.now()
 
@@ -217,36 +362,20 @@ router.post("/:id/conversation", authenticate, async (req, res) => {
             })
         }
 
-        const result = await pool.query(
-            "INSERT INTO conversations(user_id, document_id, role, message) VALUES($1,$2,$3,$4) RETURNING *",
-            [userId, documentId, req.body.role, userQuery]
-        )
-
-        const savedUserMessage = result.rows[0]
-        const { summary, recentMessages } = await getConversationContext(
-            documentId,
-            userId
-        )
-
-        const rewrittenQuery = await rewriteQuery(userQuery, recentMessages)
-
-        const { chunks: candidateChunks, cacheHit } = await retrieveRelevantChunks({
+        const {
+            savedUserMessage,
+            messages,
+            citations,
+            rankedChunks,
+            rewrittenQuery,
+            cacheHit,
+            candidateChunks,
+        } = await prepareRagConversation({
             documentId,
             userId,
-            query: userQuery,
-            rewrittenQuery,
+            userQuery,
+            role: req.body.role,
             metadataFilter: req.body.metadataFilter || {},
-        })
-
-        const rankedChunks = await rerankChunks(rewrittenQuery, candidateChunks, 5)
-        const citations = formatContextWithCitations(rankedChunks)
-        const numberedContext = buildNumberedContext(rankedChunks)
-
-        const messages = buildPromptMessages({
-            summary,
-            recentMessages,
-            numberedContext,
-            currentQuery: userQuery,
         })
 
         const assistantResponse = await generateResponse(messages)
